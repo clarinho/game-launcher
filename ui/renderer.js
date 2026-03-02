@@ -20,6 +20,8 @@ let modalMode = "add";
 let viewMode = "panel";
 const forceFallbackById = loadForceFallbackMap();
 let scanInProgress = false;
+let launchTicker = null;
+let currentGames = [];
 
 function loadForceFallbackMap() {
     try {
@@ -49,6 +51,14 @@ function formatDurationLabel(totalSeconds) {
         return `${hours}h ${minutes}m`;
     }
     return `${minutes}m`;
+}
+
+function formatHms(totalSeconds) {
+    const clamped = Math.max(0, Math.floor(totalSeconds));
+    const hours = Math.floor(clamped / 3600);
+    const minutes = Math.floor((clamped % 3600) / 60);
+    const seconds = clamped % 60;
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 function formatHoursFromTimeText(text) {
@@ -134,17 +144,16 @@ async function refreshLibrary() {
     const grid = document.getElementById('game-grid');
     const countEl = document.getElementById('stat-count');
     const timeEl = document.getElementById('stat-time');
-    const logEl = getActivityEl();
-
     if (res.code !== 0) {
         grid.innerHTML = '';
         countEl.innerText = '0';
         timeEl.innerText = '0m';
-        logEl.textContent = res.stderr || 'Failed to load library';
+        setActivity(res.stderr || 'Failed to load library');
         return;
     }
 
     const games = parseListOutput(res.stdout);
+    currentGames = games;
     grid.classList.toggle("list-mode", viewMode === "list");
     grid.innerHTML = '';
 
@@ -171,7 +180,6 @@ async function refreshLibrary() {
     countEl.innerText = String(games.length);
     const totalSeconds = games.reduce((sum, game) => sum + parseTimeToSeconds(game.time), 0);
     timeEl.innerText = formatDurationLabel(totalSeconds);
-    logEl.textContent = `Loaded ${games.length} games`;
 }
 
 function setViewMode(mode) {
@@ -182,13 +190,32 @@ function setViewMode(mode) {
 }
 
 async function launchGame(id) {
+    if (launchTicker) {
+        clearInterval(launchTicker);
+        launchTicker = null;
+    }
+
+    const selectedGame = currentGames.find((g) => g.id === String(id));
+    const gameName = selectedGame ? selectedGame.name : `Game ${id}`;
+    let rollingTotalSeconds = selectedGame ? parseTimeToSeconds(selectedGame.time) : 0;
+    setActivity(`Launching ${gameName} | Total Played: ${formatHms(rollingTotalSeconds)}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    launchTicker = setInterval(() => {
+        rollingTotalSeconds += 1;
+        setActivity(`Launching ${gameName} | Total Played: ${formatHms(rollingTotalSeconds)}`);
+    }, 1000);
+
     const useForceFallback = Boolean(forceFallbackById[id]);
     const args = ['launch', '--id', id];
     if (useForceFallback) {
         args.push('--force-fallback');
     }
     const res = await window.api.runCampfire(args);
-    setActivity(res.stdout || res.stderr);
+    if (launchTicker) {
+        clearInterval(launchTicker);
+        launchTicker = null;
+    }
+    setActivity(res.stdout || res.stderr || `Launch finished for ${gameName}.`);
     refreshLibrary();
 }
 
