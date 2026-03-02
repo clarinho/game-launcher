@@ -24,6 +24,7 @@
       "style.css",
       "package.json"
     ],
+    "artifactName": "Campfire-Setup-${version}.${ext}",
     "extraResources": [
       {
         "from": "../build/campfire.exe",
@@ -31,14 +32,20 @@
       }
     ],
     "win": {
+      "icon": "assets/campfire.ico",
       "target": [
         "nsis"
       ]
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": false
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "shortcutName": "Campfire",
+      "installerIcon": "assets/campfire.ico",
+      "uninstallerIcon": "assets/campfire.ico",
+      "installerHeaderIcon": "assets/campfire.ico"
     }
   },
   "devDependencies": {

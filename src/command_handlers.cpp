@@ -14,6 +14,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -107,6 +108,194 @@ std::vector<std::string> extract_quoted_tokens(const std::string& line) {
     pos = end + 1;
   }
   return tokens;
+}
+
+std::string detect_steam_app_id(const std::string& exe_path_text);
+
+std::string trim_copy(const std::string& value) {
+  size_t start = 0;
+  while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start])) != 0) {
+    ++start;
+  }
+
+  size_t end = value.size();
+  while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1])) != 0) {
+    --end;
+  }
+
+  return value.substr(start, end - start);
+}
+
+std::vector<fs::path> possible_steam_roots_from_game_path(const std::string& exe_path_text) {
+  std::vector<fs::path> roots;
+
+  if (const char* pf86 = std::getenv("ProgramFiles(x86)")) {
+    roots.push_back(fs::path(pf86) / "Steam");
+  }
+
+  const std::string lower_path = ui::to_lower(exe_path_text);
+  const std::string token = "\\steamapps\\common\\";
+  const size_t token_pos = lower_path.find(token);
+  if (token_pos != std::string::npos) {
+    roots.push_back(fs::path(exe_path_text.substr(0, token_pos)));
+  }
+
+  std::vector<fs::path> deduped;
+  std::unordered_set<std::string> seen;
+  for (const fs::path& root : roots) {
+    std::error_code ec;
+    const fs::path canonical = fs::weakly_canonical(root, ec);
+    const std::string key = ui::to_lower((ec ? root : canonical).string());
+    if (seen.find(key) != seen.end()) {
+      continue;
+    }
+    seen.insert(key);
+    deduped.push_back(ec ? root : canonical);
+  }
+  return deduped;
+}
+
+void merge_steam_local_playtime_file(
+    const fs::path& vdf_path,
+    std::unordered_map<std::string, long long>& app_seconds) {
+  std::ifstream in(vdf_path);
+  if (!in) {
+    return;
+  }
+
+  std::vector<std::string> section_stack;
+  std::string pending_section;
+  std::string line;
+
+  while (std::getline(in, line)) {
+    const std::string trimmed = ui::to_lower(trim_copy(line));
+
+    if (trimmed.empty()) {
+      continue;
+    }
+    if (trimmed == "{") {
+      if (!pending_section.empty()) {
+        section_stack.push_back(ui::to_lower(pending_section));
+        pending_section.clear();
+      }
+      continue;
+    }
+    if (trimmed == "}") {
+      pending_section.clear();
+      if (!section_stack.empty()) {
+        section_stack.pop_back();
+      }
+      continue;
+    }
+
+    const std::vector<std::string> tokens = extract_quoted_tokens(line);
+    if (tokens.size() == 1) {
+      pending_section = tokens[0];
+      continue;
+    }
+    if (tokens.size() < 2) {
+      continue;
+    }
+
+    pending_section.clear();
+    if (section_stack.size() < 2) {
+      continue;
+    }
+
+    const std::string current_section = section_stack.back();
+    const std::string parent_section = section_stack[section_stack.size() - 2];
+    const std::string key = ui::to_lower(tokens[0]);
+    if (parent_section != "apps" || key != "playtime") {
+      continue;
+    }
+
+    if (!is_all_digits(current_section) || !is_all_digits(tokens[1])) {
+      continue;
+    }
+
+    long long minutes = 0;
+    try {
+      minutes = std::stoll(tokens[1]);
+    } catch (...) {
+      continue;
+    }
+    const long long seconds = minutes * 60;
+    auto it = app_seconds.find(current_section);
+    if (it == app_seconds.end() || seconds > it->second) {
+      app_seconds[current_section] = seconds;
+    }
+  }
+}
+
+std::unordered_map<std::string, long long> load_local_steam_play_seconds(
+    const std::vector<fs::path>& steam_roots) {
+  std::unordered_map<std::string, long long> app_seconds;
+
+  for (const fs::path& steam_root : steam_roots) {
+    const fs::path userdata_dir = steam_root / "userdata";
+    std::error_code ec;
+    if (!fs::exists(userdata_dir, ec) || ec || !fs::is_directory(userdata_dir, ec)) {
+      continue;
+    }
+
+    fs::directory_iterator user_it(userdata_dir, fs::directory_options::skip_permission_denied, ec);
+    if (ec) {
+      continue;
+    }
+    for (const auto& user_entry : user_it) {
+      if (!user_entry.is_directory()) {
+        continue;
+      }
+      const fs::path localconfig = user_entry.path() / "config" / "localconfig.vdf";
+      if (!fs::exists(localconfig, ec) || ec || !fs::is_regular_file(localconfig, ec)) {
+        continue;
+      }
+      merge_steam_local_playtime_file(localconfig, app_seconds);
+    }
+  }
+
+  return app_seconds;
+}
+
+bool sync_steam_playtime_from_local_cache(
+    Game& game,
+    const std::unordered_map<std::string, long long>& steam_play_seconds) {
+  const std::string app_id = detect_steam_app_id(game.exe_path);
+  if (app_id.empty()) {
+    return false;
+  }
+  const auto it = steam_play_seconds.find(app_id);
+  if (it == steam_play_seconds.end()) {
+    return false;
+  }
+  if (game.total_play_seconds == it->second) {
+    return false;
+  }
+
+  game.total_play_seconds = it->second;
+  return true;
+}
+
+std::vector<fs::path> collect_steam_roots_for_games(const std::vector<Game>& games) {
+  std::vector<fs::path> roots;
+  std::unordered_set<std::string> seen;
+
+  for (const Game& game : games) {
+    for (const fs::path& root : possible_steam_roots_from_game_path(game.exe_path)) {
+      const std::string key = ui::to_lower(root.string());
+      if (seen.find(key) != seen.end()) {
+        continue;
+      }
+      seen.insert(key);
+      roots.push_back(root);
+    }
+  }
+
+  if (roots.empty()) {
+    roots = possible_steam_roots_from_game_path("");
+  }
+
+  return roots;
 }
 
 std::string read_steam_appid_txt(const fs::path& dir) {
@@ -579,10 +768,19 @@ int handle_add(const std::vector<std::string>& args) {
 
 // Reads and prints all games currently stored in the local library file.
 int handle_list() {
-  const std::vector<Game> games = load_games();
+  std::vector<Game> games = load_games();
   if (games.empty()) {
     ui::print_info("No games yet. Add one with `campfire add ...`");
     return 0;
+  }
+
+  const std::vector<fs::path> steam_roots = collect_steam_roots_for_games(games);
+  const std::unordered_map<std::string, long long> steam_play_seconds =
+      load_local_steam_play_seconds(steam_roots);
+  for (Game& game : games) {
+    if (sync_steam_playtime_from_local_cache(game, steam_play_seconds)) {
+      update_game(game);
+    }
   }
 
   ui::print_list_table(games);
@@ -600,11 +798,34 @@ int handle_info(const std::vector<std::string>& args) {
     return 1;
   }
 
-  const std::vector<Game> games = load_games();
-  const Game* game = find_game_by_id_or_name(games, id, name);
+  std::vector<Game> games = load_games();
+  Game* game = nullptr;
+  if (!id.empty()) {
+    for (Game& candidate : games) {
+      if (candidate.id == id) {
+        game = &candidate;
+        break;
+      }
+    }
+  } else {
+    const std::string wanted = ui::to_lower(name);
+    for (Game& candidate : games) {
+      if (ui::to_lower(candidate.name) == wanted) {
+        game = &candidate;
+        break;
+      }
+    }
+  }
+
   if (game == nullptr) {
     ui::print_error("No game found for info target.");
     return 1;
+  }
+
+  const std::unordered_map<std::string, long long> steam_play_seconds =
+      load_local_steam_play_seconds(possible_steam_roots_from_game_path(game->exe_path));
+  if (sync_steam_playtime_from_local_cache(*game, steam_play_seconds)) {
+    update_game(*game);
   }
 
   std::cout << "id: " << game->id << '\n';
@@ -904,7 +1125,14 @@ int handle_launch(const std::vector<std::string>& args) {
     return 1;
   }
 
-  const std::vector<std::string> candidates = build_launch_candidates(*game);
+  Game selected = *game;
+  const std::unordered_map<std::string, long long> steam_play_seconds =
+      load_local_steam_play_seconds(possible_steam_roots_from_game_path(selected.exe_path));
+  if (sync_steam_playtime_from_local_cache(selected, steam_play_seconds)) {
+    update_game(selected);
+  }
+
+  const std::vector<std::string> candidates = build_launch_candidates(selected);
   if (candidates.empty()) {
     ui::print_error("No executable candidates are configured for this game.");
     return 1;
@@ -933,7 +1161,7 @@ int handle_launch(const std::vector<std::string>& args) {
       ui::print_info(
           "Trying candidate [" + std::to_string(i + 1) + "/" + std::to_string(candidates.size()) +
           "]: " + candidate);
-      launch_result = start_process(candidate, game->args);
+      launch_result = start_process(candidate, selected.args);
     }
 
     if (launch_result.code == 0) {
@@ -963,7 +1191,7 @@ int handle_launch(const std::vector<std::string>& args) {
   }
 
   if (launch_result.code == 0) {
-    Game updated = *game;
+    Game updated = selected;
     const std::vector<std::string> reordered = reorder_candidates_after_success(candidates, successful_index);
     if (!reordered.empty()) {
       updated.exe_path = reordered.front();
@@ -976,7 +1204,7 @@ int handle_launch(const std::vector<std::string>& args) {
       return 1;
     }
 
-    ui::print_ok("Launched: " + game->name);
+    ui::print_ok("Launched: " + selected.name);
     if (!launched_steam_app_id.empty()) {
       std::cout << "session time: tracking unavailable for Steam launches\n";
     } else {
