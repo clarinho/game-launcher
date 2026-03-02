@@ -37,6 +37,25 @@ jobs:
         shell: pwsh
         run: ./scripts/build-release.ps1
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI dependencies
+        shell: pwsh
+        run: |
+          Set-Location ui
+          npm ci
+
+      - name: Build Campfire UI installer
+        shell: pwsh
+        run: |
+          Set-Location ui
+          npm run dist:win
+
       - name: Package release assets
         shell: pwsh
         run: ./scripts/package-release.ps1 -Version "${{ steps.meta.outputs.version }}"
@@ -47,3 +66,4 @@ jobs:
           files: |
             dist/campfire-win-x64.zip
             dist/campfire-win-x64-${{ steps.meta.outputs.version }}.zip
+            dist/ui/*.exe

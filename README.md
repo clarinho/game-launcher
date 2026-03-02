@@ -8,6 +8,13 @@ It lets you maintain a game library, launch titles from one place, and track sim
 ### One-Click Install (Recommended for friends)
 
 1. Open the latest GitHub Release.
+2. Download `Campfire-Setup.exe`.
+3. Run the installer.
+4. Launch **Campfire** from Start Menu.
+
+### One-Click Install (CLI only)
+
+1. Open the latest GitHub Release.
 2. Download `campfire-win-x64.zip`.
 3. Extract the zip.
 4. Double-click `install-campfire.bat`.
@@ -56,6 +63,17 @@ npm run dev
 Notes:
 - The UI auto-reloads/restarts during development (`npm run dev`).
 - The UI prefers `build/campfire_dev.exe`, then falls back to `build/campfire.exe`.
+
+### Build the Windows UI installer locally
+
+```bash
+cd ui
+npm install
+npm run dist:win
+```
+
+Installer output:
+- `dist/ui/*.exe`
 
 ## Features
 

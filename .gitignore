@@ -1,5 +1,9 @@
 ui/node_modules/
 npm-debug.log*
+ui/dist/
+ui/win-unpacked/
+ui/builder-debug.yml
+ui/latest.yml
 
 # Generated binaries/build artifacts
 build/

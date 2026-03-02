@@ -3,6 +3,10 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 function resolveCampfireBinary() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "campfire", "campfire.exe");
+  }
+
   const candidates = [
     path.join(__dirname, "..", "build", "campfire_dev.exe"),
     path.join(__dirname, "..", "build", "campfire.exe"),

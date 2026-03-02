@@ -1,13 +1,49 @@
 {
   "name": "campfire-ui",
   "version": "1.0.0",
+  "description": "Campfire desktop launcher UI",
+  "author": "Campfire",
+  "license": "MIT",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "nodemon --watch main.js --watch preload.js --watch renderer.js --watch index.html --watch style.css --exec \"electron .\""
+    "dev": "nodemon --watch main.js --watch preload.js --watch renderer.js --watch index.html --watch style.css --exec \"electron .\"",
+    "dist:win": "electron-builder --win nsis"
+  },
+  "build": {
+    "appId": "com.campfire.launcher",
+    "productName": "Campfire",
+    "directories": {
+      "output": "../dist/ui"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer.js",
+      "index.html",
+      "style.css",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../build/campfire.exe",
+        "to": "campfire/campfire.exe"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false
+    }
   },
   "devDependencies": {
     "electron": "^40.6.1",
+    "electron-builder": "^26.0.12",
     "nodemon": "^3.1.10"
   }
 }
