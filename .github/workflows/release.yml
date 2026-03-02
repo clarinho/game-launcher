@@ -75,4 +75,4 @@ jobs:
           files: |
             dist/campfire-win-x64.zip
             dist/campfire-win-x64-${{ steps.meta.outputs.version }}.zip
-            dist/ui/**/*.exe
+            dist/ui/*Setup*.exe
