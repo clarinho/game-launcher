@@ -30,4 +30,10 @@ bool remove_game(const std::string& id);
 // Scans well-known directories for likely game executables.
 std::vector<ScannedGame> scan_common_game_dirs();
 
+// Returns the resolved path to the library TSV file.
+std::string game_library_file_path();
+
+// Returns the configured root directories used by `scan`.
+std::vector<std::string> common_scan_roots();
+
 #endif

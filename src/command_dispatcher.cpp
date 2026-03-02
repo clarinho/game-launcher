@@ -28,6 +28,12 @@ int dispatch_command(const std::vector<std::string>& args) {
   if (command == "remove") {
     return handle_remove(args);
   }
+  if (command == "launch") {
+    return handle_launch(args);
+  }
+  if (command == "doctor") {
+    return handle_doctor();
+  }
 
   ui::print_error("Unknown command: " + command);
   ui::print_help();

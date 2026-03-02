@@ -101,6 +101,8 @@ void print_help() {
       << "Commands:\n"
       << "  add --name \"<name>\" --exe \"<path>\" [--args \"<args>\"]\n"
       << "  remove --id \"<id>\"\n"
+      << "  launch (--id \"<id>\" | --name \"<name>\")\n"
+      << "  doctor\n"
       << "  scan\n"
       << "  list\n"
       << "  --help\n";

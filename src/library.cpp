@@ -20,6 +20,16 @@ static fs::path data_file_path() {
   return fs::current_path() / "data" / "games.tsv";
 }
 
+// Root directories that `scan` inspects for installed games.
+static const std::vector<fs::path>& scan_roots() {
+  static const std::vector<fs::path> roots = {
+      R"(C:\games)",
+      R"(D:\games)",
+      R"(C:\Program Files (x86)\Steam\steamapps\common)",
+  };
+  return roots;
+}
+
 // Lowercases text for case-insensitive comparisons.
 static std::string to_lower(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
@@ -221,17 +231,10 @@ bool remove_game(const std::string& id) {
 }
 
 std::vector<ScannedGame> scan_common_game_dirs() {
-  // Keep the root list explicit and predictable for users.
-  const std::vector<fs::path> roots = {
-      R"(C:\games)",
-      R"(D:\games)",
-      R"(C:\Program Files (x86)\Steam\steamapps\common)",
-  };
-
   std::vector<ScannedGame> found;
   std::unordered_set<std::string> seen_exe_paths;
 
-  for (const fs::path& root : roots) {
+  for (const fs::path& root : scan_roots()) {
     std::error_code ec;
     if (!fs::exists(root, ec) || !fs::is_directory(root, ec)) {
       continue;
@@ -264,4 +267,17 @@ std::vector<ScannedGame> scan_common_game_dirs() {
   }
 
   return found;
+}
+
+std::string game_library_file_path() {
+  return data_file_path().string();
+}
+
+std::vector<std::string> common_scan_roots() {
+  std::vector<std::string> roots;
+  roots.reserve(scan_roots().size());
+  for (const fs::path& root : scan_roots()) {
+    roots.push_back(root.string());
+  }
+  return roots;
 }

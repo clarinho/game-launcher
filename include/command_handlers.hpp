@@ -16,6 +16,12 @@ int handle_scan();
 
 // Handles `campfire remove` command parsing and deletion.
 int handle_remove(const std::vector<std::string>& args);
+
+// Handles `campfire launch` command parsing and process start.
+int handle_launch(const std::vector<std::string>& args);
+
+// Handles `campfire doctor` runtime diagnostics.
+int handle_doctor();
 }  // namespace commands
 
 #endif

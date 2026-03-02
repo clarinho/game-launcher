@@ -16,3 +16,18 @@ add_executable(campfire
 )
 
 target_include_directories(campfire PRIVATE include)
+
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(campfire_tests
+    tests/campfire_tests.cpp
+    src/app.cpp
+    src/command_dispatcher.cpp
+    src/command_handlers.cpp
+    src/library.cpp
+    src/console_ui.cpp
+    src/cli_args.cpp
+  )
+  target_include_directories(campfire_tests PRIVATE include)
+  add_test(NAME campfire_tests COMMAND campfire_tests)
+endif()
