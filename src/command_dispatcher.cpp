@@ -22,6 +22,12 @@ int dispatch_command(const std::vector<std::string>& args) {
   if (command == "list") {
     return handle_list();
   }
+  if (command == "info") {
+    return handle_info(args);
+  }
+  if (command == "edit") {
+    return handle_edit(args);
+  }
   if (command == "scan") {
     return handle_scan();
   }

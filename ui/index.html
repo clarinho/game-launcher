@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="brand">
+            <div class="brand-mark"></div>
+            <div class="logo">CAMPFIRE</div>
+        </div>
+        <nav class="nav-stack">
+            <div class="nav-item active" onclick="showPage('library', this)">Library</div>
+        </nav>
+        <div class="sidebar-footer">
+        </div>
+    </aside>
+
+    <main class="app-main">
+        <div class="menu-strip">
+            <div class="menu-item tools">
+                <span>Tools</span>
+                <div class="menu-dropdown">
+                    <button class="menu-action" onclick="openScanFromMenu()">Scan Library</button>
+                    <button class="menu-action" onclick="openDoctorFromMenu()">Run Doctor</button>
+                </div>
+            </div>
+            <div class="menu-item tools">
+                <span>Help</span>
+                <div class="menu-dropdown">
+                    <button class="menu-action" onclick="openHelpFromMenu()">About Campfire</button>
+                </div>
+            </div>
+            <div class="menu-item tools menu-plus">
+                <span>+</span>
+                <div class="menu-dropdown">
+                    <button class="menu-action" onclick="openModal()">Add Game</button>
+                </div>
+            </div>
+        </div>
+
+        <header class="topbar">
+            <div class="topbar-title">
+                <h1 id="page-title">Your Library</h1>
+                <p id="page-subtitle">Launch and manage local games</p>
+            </div>
+            <div class="topbar-actions">
+                <div class="view-toggle">
+                    <button id="view-panel" class="ghost-btn active" onclick="setViewMode('panel')">Panel</button>
+                    <button id="view-list" class="ghost-btn" onclick="setViewMode('list')">List</button>
+                </div>
+            </div>
+        </header>
+
+        <section class="stat-row">
+            <div class="stat-card">
+                <span class="label">Games</span>
+                <span class="value" id="stat-count">0</span>
+            </div>
+            <div class="stat-card">
+                <span class="label">Playtime</span>
+                <span class="value" id="stat-time">0m</span>
+            </div>
+        </section>
+
+        <section id="library" class="page">
+            <div class="game-grid" id="game-grid"></div>
+        </section>
+
+        <section class="status-shell">
+            <div class="container">
+                <div class="panel-head">
+                    <h2>Activity</h2>
+                    <button class="ghost-btn clear-btn" onclick="clearActivity()">Clear</button>
+                </div>
+                <div id="activity-resize-handle" class="activity-resize-handle" title="Drag to resize"></div>
+                <pre id="status-output" class="console status-console"></pre>
+            </div>
+        </section>
+    </main>
+
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <h3 id="modal-title">Add New Game</h3>
+            <input type="hidden" id="edit-id">
+            <input type="text" id="add-name" placeholder="Game Name">
+            <input type="text" id="add-path" placeholder="Executable Path">
+            <input type="text" id="add-args" placeholder="Arguments (Optional)">
+            <label class="toggle-row modal-toggle" id="edit-force-wrap" style="display:none">
+                <span>Force fallback launch</span>
+                <input type="checkbox" id="edit-force-fallback">
+            </label>
+            <div class="modal-actions">
+                <button onclick="closeModal()">CANCEL</button>
+                <button class="neon-button" id="modal-save" onclick="saveGame()">SAVE</button>
+            </div>
+        </div>
+    </div>
+</body>
+<script src="renderer.js"></script>
+</html>

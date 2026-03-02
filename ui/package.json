@@ -1,0 +1,13 @@
+{
+  "name": "campfire-ui",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "nodemon --watch main.js --watch preload.js --watch renderer.js --watch index.html --watch style.css --exec \"electron .\""
+  },
+  "devDependencies": {
+    "electron": "^40.6.1",
+    "nodemon": "^3.1.10"
+  }
+}

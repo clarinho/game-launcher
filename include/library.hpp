@@ -9,7 +9,10 @@ struct Game {
   std::string id;
   std::string name;
   std::string exe_path;
+  std::vector<std::string> exe_candidates;
   std::string args;
+  long long play_count = 0;
+  long long total_play_seconds = 0;
 };
 
 // Represents one discovered executable during folder scanning.
@@ -26,6 +29,9 @@ Game add_game(const std::string& name, const std::string& exe_path, const std::s
 
 // Removes a game by ID. Returns true when a game was removed.
 bool remove_game(const std::string& id);
+
+// Updates one game by matching ID. Returns true when a game was updated.
+bool update_game(const Game& updated);
 
 // Scans well-known directories for likely game executables.
 std::vector<ScannedGame> scan_common_game_dirs();

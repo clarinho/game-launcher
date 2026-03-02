@@ -48,7 +48,11 @@ static bool is_unwanted_exe_name(const std::string& exe_name) {
   const std::string name = to_lower(exe_name);
   return name.find("unins") != std::string::npos ||
          name.find("uninstall") != std::string::npos ||
+         name.find("launcher") != std::string::npos ||
+         name.find("updater") != std::string::npos ||
+         name.find("bootstrap") != std::string::npos ||
          name.find("setup") != std::string::npos ||
+         name.find("install") != std::string::npos ||
          name.find("vc_redist") != std::string::npos ||
          name.find("crash") != std::string::npos;
 }
@@ -141,6 +145,72 @@ static std::vector<std::string> split_tab_line(const std::string& line) {
   return parts;
 }
 
+static long long parse_non_negative_int64(const std::string& value, long long default_value) {
+  try {
+    const long long parsed = std::stoll(value);
+    return parsed < 0 ? default_value : parsed;
+  } catch (...) {
+    return default_value;
+  }
+}
+
+static std::vector<std::string> split_pipe_line(const std::string& line) {
+  std::vector<std::string> parts;
+  std::stringstream ss(line);
+  std::string item;
+  while (std::getline(ss, item, '|')) {
+    if (!item.empty()) {
+      parts.push_back(item);
+    }
+  }
+  return parts;
+}
+
+static std::string join_pipe_line(const std::vector<std::string>& parts) {
+  std::string out;
+  bool first = true;
+  for (const std::string& part : parts) {
+    if (part.empty()) {
+      continue;
+    }
+    if (!first) {
+      out += '|';
+    }
+    out += part;
+    first = false;
+  }
+  return out;
+}
+
+static std::vector<std::string> normalize_candidates_for_storage(
+    const std::string& primary_exe,
+    const std::vector<std::string>& candidates) {
+  std::vector<std::string> normalized;
+  std::unordered_set<std::string> seen;
+
+  const auto add_unique = [&](const std::string& path) {
+    if (path.empty()) {
+      return;
+    }
+    const std::string key = to_lower(path);
+    if (seen.find(key) != seen.end()) {
+      return;
+    }
+    seen.insert(key);
+    normalized.push_back(path);
+  };
+
+  add_unique(primary_exe);
+  for (const std::string& path : candidates) {
+    add_unique(path);
+  }
+
+  if (normalized.size() > 3) {
+    normalized.resize(3);
+  }
+  return normalized;
+}
+
 std::vector<Game> load_games() {
   ensure_data_file();
 
@@ -162,7 +232,14 @@ std::vector<Game> load_games() {
       continue;
     }
 
-    games.push_back(Game{parts[0], parts[1], parts[2], parts[3]});
+    const long long play_count = parts.size() >= 5 ? parse_non_negative_int64(parts[4], 0) : 0;
+    const long long total_play_seconds = parts.size() >= 6 ? parse_non_negative_int64(parts[5], 0) : 0;
+    const std::vector<std::string> parsed_candidates =
+        parts.size() >= 7 ? split_pipe_line(parts[6]) : std::vector<std::string>{};
+    const std::vector<std::string> exe_candidates =
+        normalize_candidates_for_storage(parts[2], parsed_candidates);
+
+    games.push_back(Game{parts[0], parts[1], parts[2], exe_candidates, parts[3], play_count, total_play_seconds});
   }
 
   return games;
@@ -184,10 +261,16 @@ static void save_games(const std::vector<Game>& games) {
   }
 
   for (const Game& game : games) {
+    const std::vector<std::string> exe_candidates =
+        normalize_candidates_for_storage(game.exe_path, game.exe_candidates);
+
     out << game.id << '\t'
         << game.name << '\t'
         << game.exe_path << '\t'
-        << game.args << '\n';
+        << game.args << '\t'
+        << game.play_count << '\t'
+        << game.total_play_seconds << '\t'
+        << join_pipe_line(exe_candidates) << '\n';
   }
 }
 
@@ -206,7 +289,7 @@ Game add_game(const std::string& name, const std::string& exe_path, const std::s
     }
   }
 
-  Game game{std::to_string(max_id + 1), name, exe_path, args};
+  Game game{std::to_string(max_id + 1), name, exe_path, {exe_path}, args, 0, 0};
   games.push_back(game);
   save_games(games);
   return game;
@@ -223,6 +306,26 @@ bool remove_game(const std::string& id) {
       games.end());
 
   if (games.size() == old_size) {
+    return false;
+  }
+
+  save_games(games);
+  return true;
+}
+
+bool update_game(const Game& updated) {
+  std::vector<Game> games = load_games();
+  bool found = false;
+
+  for (Game& game : games) {
+    if (game.id == updated.id) {
+      game = updated;
+      found = true;
+      break;
+    }
+  }
+
+  if (!found) {
     return false;
   }
 

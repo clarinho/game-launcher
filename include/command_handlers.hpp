@@ -11,6 +11,12 @@ int handle_add(const std::vector<std::string>& args);
 // Handles `campfire list` command output.
 int handle_list();
 
+// Handles `campfire info` command output for one game.
+int handle_info(const std::vector<std::string>& args);
+
+// Handles 'campfire edit' command parsing and update.
+int handle_edit(const std::vector<std::string>& args);
+
 // Handles `campfire scan` and optional interactive import.
 int handle_scan();
 

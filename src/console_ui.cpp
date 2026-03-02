@@ -4,6 +4,7 @@
 #include <cctype>
 #include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string_view>
 
 #ifdef _WIN32
@@ -65,6 +66,13 @@ std::string truncate_with_ellipsis(const std::string& text, size_t width) {
   return text.substr(0, width - 3) + "...";
 }
 
+std::string format_duration(long long total_seconds) {
+  const double total_hours = static_cast<double>(total_seconds) / 3600.0;
+  std::ostringstream out;
+  out << std::fixed << std::setprecision(1) << total_hours << "h";
+  return out.str();
+}
+
 void print_banner() {
   const std::string top = "+-------------------------------------+";
   const std::string mid = "| Campfire - personal game launcher   |";
@@ -100,11 +108,13 @@ void print_help() {
       << "  campfire <command> [options]\n\n"
       << "Commands:\n"
       << "  add --name \"<name>\" --exe \"<path>\" [--args \"<args>\"]\n"
-      << "  remove --id \"<id>\"\n"
-      << "  launch (--id \"<id>\" | --name \"<name>\")\n"
+      << "  info (--id <id> | --name \"<name>\")\n"
+      << "  edit --id <id> [--name \"<name>\"] [--exe \"<path>\"] [--args \"<args>\"]\n"
+      << "  remove --id <id>\n"
+      << "  launch (--id <id> | --name \"<name>\") [--force-fallback]\n"
       << "  doctor\n"
       << "  scan\n"
-      << "  list\n"
+      << "  list\n" 
       << "  --help\n";
 }
 
@@ -133,22 +143,35 @@ void print_add_result(const Game& game) {
 void print_list_table(const std::vector<Game>& games) {
   size_t id_width = 2;
   size_t name_width = 4;
+  size_t plays_width = 5;
+  size_t time_width = 4;
   for (const Game& game : games) {
     id_width = std::max(id_width, game.id.size());
     name_width = std::max(name_width, game.name.size());
+    plays_width = std::max(plays_width, std::to_string(game.play_count).size());
+    time_width = std::max(time_width, format_duration(game.total_play_seconds).size());
   }
   name_width = std::min<size_t>(name_width, 40);
 
-  const std::string divider = std::string(id_width + 2, '-') + "+" + std::string(name_width + 2, '-');
+  const std::string divider =
+      std::string(id_width + 2, '-') + "+" +
+      std::string(name_width + 2, '-') + "+" +
+      std::string(plays_width + 2, '-') + "+" +
+      std::string(time_width + 2, '-');
   std::cout << color(kDim, divider) << '\n';
   std::cout << ' ' << std::left << std::setw(static_cast<int>(id_width)) << "ID" << " | "
-            << std::left << std::setw(static_cast<int>(name_width)) << "Name" << '\n';
+            << std::left << std::setw(static_cast<int>(name_width)) << "Name" << " | "
+            << std::left << std::setw(static_cast<int>(plays_width)) << "Plays" << " | "
+            << std::left << std::setw(static_cast<int>(time_width)) << "Time" << '\n';
   std::cout << color(kDim, divider) << '\n';
 
   for (const Game& game : games) {
     std::cout << ' ' << std::left << std::setw(static_cast<int>(id_width)) << game.id << " | "
               << std::left << std::setw(static_cast<int>(name_width))
-              << truncate_with_ellipsis(game.name, name_width) << '\n';
+              << truncate_with_ellipsis(game.name, name_width) << " | "
+              << std::left << std::setw(static_cast<int>(plays_width)) << game.play_count << " | "
+              << std::left << std::setw(static_cast<int>(time_width))
+              << format_duration(game.total_play_seconds) << '\n';
   }
 }
 
