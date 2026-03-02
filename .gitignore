@@ -1,2 +1,10 @@
 ui/node_modules/
 npm-debug.log*
+
+# Generated binaries/build artifacts
+build/
+*.exe
+
+# Packaged release artifacts
+dist/*.zip
+dist/campfire-win-x64-*/
