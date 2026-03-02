@@ -56,6 +56,12 @@ jobs:
           Set-Location ui
           npm run dist:win
 
+      - name: List built assets
+        shell: pwsh
+        run: |
+          Write-Host "CLI assets:"
+          if (Test-Path dist) { Get-ChildItem -Recurse dist | Select-Object FullName } else { Write-Host "dist folder missing" }
+
       - name: Package release assets
         shell: pwsh
         run: ./scripts/package-release.ps1 -Version "${{ steps.meta.outputs.version }}"
@@ -66,4 +72,4 @@ jobs:
           files: |
             dist/campfire-win-x64.zip
             dist/campfire-win-x64-${{ steps.meta.outputs.version }}.zip
-            dist/ui/*.exe
+            dist/ui/**/*.exe
