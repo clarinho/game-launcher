@@ -24,6 +24,7 @@ New-Item -ItemType Directory -Force $ReleaseDir | Out-Null
 
 Copy-Item $ExePath (Join-Path $stageDir "campfire.exe")
 Copy-Item "scripts/install-campfire.ps1" (Join-Path $stageDir "install-campfire.ps1")
+Copy-Item "scripts/install-campfire.bat" (Join-Path $stageDir "install-campfire.bat")
 if (Test-Path "APP_PATHS.md") {
   Copy-Item "APP_PATHS.md" (Join-Path $stageDir "APP_PATHS.md")
 }

@@ -5,6 +5,18 @@ It lets you maintain a game library, launch titles from one place, and track sim
 
 ## Installation
 
+### One-Click Install (Recommended for friends)
+
+1. Open the latest GitHub Release.
+2. Download `campfire-win-x64.zip`.
+3. Extract the zip.
+4. Double-click `install-campfire.bat`.
+5. Open a new terminal and run:
+
+```bash
+campfire --help
+```
+
 ### Prerequisites
 
 - Windows 10/11
