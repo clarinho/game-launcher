@@ -1,0 +1,49 @@
+name: Release Windows Installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2 (UCRT64)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+
+      - name: Resolve version
+        id: meta
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $version = $env:GITHUB_REF_NAME
+          } else {
+            $version = 'dev'
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Build release executable
+        shell: pwsh
+        run: ./scripts/build-release.ps1
+
+      - name: Package release assets
+        shell: pwsh
+        run: ./scripts/package-release.ps1 -Version "${{ steps.meta.outputs.version }}"
+
+      - name: Publish GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/campfire-win-x64.zip
+            dist/campfire-win-x64-${{ steps.meta.outputs.version }}.zip
