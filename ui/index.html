@@ -25,6 +25,7 @@
                 <div class="menu-dropdown">
                     <button class="menu-action" onclick="openScanFromMenu()">Scan Library</button>
                     <button class="menu-action" onclick="openDoctorFromMenu()">Run Doctor</button>
+                    <button class="menu-action" onclick="openDebugFromMenu()">Generate Debug Report</button>
                 </div>
             </div>
             <div class="menu-item tools">
@@ -47,9 +48,25 @@
                 <p id="page-subtitle">Launch and manage local games</p>
             </div>
             <div class="topbar-actions">
+                <select id="sort-mode" class="sort-select" onchange="setSortMode(this.value)">
+                    <option value="name_asc">Name A-Z</option>
+                    <option value="name_desc">Name Z-A</option>
+                    <option value="time_desc">Most Played Time</option>
+                    <option value="time_asc">Least Played Time</option>
+                    <option value="launcher_asc">Launcher A-Z</option>
+                    <option value="launcher_desc">Launcher Z-A</option>
+                </select>
                 <div class="view-toggle">
-                    <button id="view-panel" class="ghost-btn active" onclick="setViewMode('panel')">Panel</button>
-                    <button id="view-list" class="ghost-btn" onclick="setViewMode('list')">List</button>
+                    <button id="view-panel" class="view-icon-btn active" onclick="setViewMode('panel')" aria-label="Grid mode">
+                        <span class="icon-grid">
+                            <span></span><span></span><span></span><span></span>
+                        </span>
+                    </button>
+                    <button id="view-list" class="view-icon-btn" onclick="setViewMode('list')" aria-label="List mode">
+                        <span class="icon-list">
+                            <span></span><span></span><span></span>
+                        </span>
+                    </button>
                 </div>
             </div>
         </header>
@@ -93,6 +110,7 @@
                 <input type="checkbox" id="edit-force-fallback">
             </label>
             <div class="modal-actions">
+                <button id="modal-delete" class="danger-btn" style="display:none" onclick="deleteGame()">DELETE</button>
                 <button onclick="closeModal()">CANCEL</button>
                 <button class="neon-button" id="modal-save" onclick="saveGame()">SAVE</button>
             </div>

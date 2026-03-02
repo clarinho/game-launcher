@@ -10,7 +10,11 @@ function parseListOutput(output) {
             id: match[1],
             name: match[2],
             plays: Number(match[3]) || 0,
-            time: match[4]
+            time: match[4],
+            launcher: "Local",
+            exePath: "",
+            steamAppId: "",
+            artwork: "",
         });
     }
     return games;
@@ -18,10 +22,21 @@ function parseListOutput(output) {
 
 let modalMode = "add";
 let viewMode = "panel";
+let sortMode = "name_asc";
 const forceFallbackById = loadForceFallbackMap();
 let scanInProgress = false;
 let launchTicker = null;
 let currentGames = [];
+
+const launcherClassByName = {
+    "Riot": "tag-riot",
+    "Xbox": "tag-xbox",
+    "Steam": "tag-steam",
+    "Battle.net": "tag-bnet",
+    "Epic": "tag-epic",
+    "EA": "tag-ea",
+    "Local": "tag-local",
+};
 
 function loadForceFallbackMap() {
     try {
@@ -87,13 +102,131 @@ function parseTimeToSeconds(text) {
     return seconds;
 }
 
+function tagClassForLauncher(name) {
+    return launcherClassByName[name] || launcherClassByName.Local;
+}
+
+function escapeHtml(text) {
+    return String(text || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+function parseInfoOutput(output) {
+    const lines = output.split("\n");
+    const details = {
+        name: "",
+        path: "",
+        launcher: "Local",
+        steamAppId: "",
+    };
+
+    for (const line of lines) {
+        const idx = line.indexOf(":");
+        if (idx < 0) {
+            continue;
+        }
+        const key = line.slice(0, idx).trim().toLowerCase();
+        const value = line.slice(idx + 1).trim();
+
+        if (key === "name") {
+            details.name = value;
+        } else if (key === "path") {
+            details.path = value;
+        } else if (key === "launcher") {
+            details.launcher = value || "Local";
+        } else if (key === "steam app id") {
+            details.steamAppId = value;
+        }
+    }
+
+    return details;
+}
+
+async function resolveArtworkForGame(game) {
+    if (game.steamAppId) {
+        return `https://cdn.cloudflare.steamstatic.com/steam/apps/${game.steamAppId}/library_600x900.jpg`;
+    }
+
+    if (game.exePath) {
+        const local = await window.api.findArtwork(game.exePath);
+        if (local) {
+            return `file://${local.replaceAll('\\', '/')}`;
+        }
+    }
+
+    return "";
+}
+
+async function enrichGames(games) {
+    const enriched = await Promise.all(games.map(async (game) => {
+        const res = await window.api.runCampfire(["info", "--id", game.id]);
+        if (res.code !== 0) {
+            return game;
+        }
+
+        const info = parseInfoOutput(res.stdout || "");
+        const artwork = await resolveArtworkForGame({ ...game, ...info });
+
+        return {
+            ...game,
+            name: info.name || game.name,
+            launcher: info.launcher || "Local",
+            exePath: info.path || "",
+            steamAppId: info.steamAppId || "",
+            artwork,
+        };
+    }));
+
+    return enriched;
+}
+
+function applySort(games) {
+    const copy = [...games];
+
+    const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+    const byTime = (a, b) => parseTimeToSeconds(a.time) - parseTimeToSeconds(b.time);
+    const byLauncher = (a, b) => (a.launcher || "Local").localeCompare(b.launcher || "Local", undefined, { sensitivity: "base" });
+
+    if (sortMode === "name_asc") {
+        copy.sort(byName);
+    } else if (sortMode === "name_desc") {
+        copy.sort((a, b) => byName(b, a));
+    } else if (sortMode === "time_asc") {
+        copy.sort(byTime);
+    } else if (sortMode === "time_desc") {
+        copy.sort((a, b) => byTime(b, a));
+    } else if (sortMode === "launcher_asc") {
+        copy.sort((a, b) => byLauncher(a, b) || byName(a, b));
+    } else if (sortMode === "launcher_desc") {
+        copy.sort((a, b) => byLauncher(b, a) || byName(a, b));
+    }
+
+    return copy;
+}
+
 function renderPanelCard(game) {
     const displayHours = formatHoursFromTimeText(game.time);
+    const launcher = escapeHtml(game.launcher || "Local");
+    const tagClass = tagClassForLauncher(game.launcher || "Local");
+    const artwork = game.artwork
+        ? `<img class="art-img" src="${escapeHtml(game.artwork)}" alt="${escapeHtml(game.name)} artwork" onerror="this.style.display='none'"/>`
+        : "";
+
     return `
         <div class="game-card">
-            <div class="game-stripe"></div>
+            <div class="card-art ${game.artwork ? "" : "no-art"}">
+                ${artwork}
+                <div class="game-stripe"></div>
+            </div>
             <div class="game-info">
-                <span class="game-title">${game.name}</span>
+                <div class="game-title-row">
+                    <span class="game-title">${escapeHtml(game.name)}</span>
+                    <span class="launcher-tag ${tagClass}">${launcher}</span>
+                </div>
                 <span class="game-meta">Time Played: ${displayHours}</span>
                 <span class="game-meta">Times Launched: ${game.plays}</span>
                 <div class="game-actions">
@@ -107,10 +240,14 @@ function renderPanelCard(game) {
 
 function renderListRow(game) {
     const displayHours = formatHoursFromTimeText(game.time);
+    const launcher = escapeHtml(game.launcher || "Local");
+    const tagClass = tagClassForLauncher(game.launcher || "Local");
+
     return `
         <div class="game-list-row">
             <div class="row-main">
-                <span class="game-title">${game.name}</span>
+                <span class="game-title">${escapeHtml(game.name)}</span>
+                <span class="launcher-tag ${tagClass}">${launcher}</span>
             </div>
             <div class="row-meta">
                 <span class="game-meta">Time Played: ${displayHours}</span>
@@ -153,11 +290,14 @@ async function refreshLibrary() {
     }
 
     const games = parseListOutput(res.stdout);
-    currentGames = games;
+    const enriched = await enrichGames(games);
+    const sortedGames = applySort(enriched);
+    currentGames = sortedGames;
+
     grid.classList.toggle("list-mode", viewMode === "list");
     grid.innerHTML = '';
 
-    if (games.length === 0) {
+    if (sortedGames.length === 0) {
         grid.innerHTML = `
             <div class="game-card">
                 <div class="game-stripe"></div>
@@ -169,7 +309,7 @@ async function refreshLibrary() {
         `;
     }
 
-    for (const game of games) {
+    for (const game of sortedGames) {
         if (viewMode === "list") {
             grid.insertAdjacentHTML("beforeend", renderListRow(game));
         } else {
@@ -177,8 +317,8 @@ async function refreshLibrary() {
         }
     }
 
-    countEl.innerText = String(games.length);
-    const totalSeconds = games.reduce((sum, game) => sum + parseTimeToSeconds(game.time), 0);
+    countEl.innerText = String(sortedGames.length);
+    const totalSeconds = sortedGames.reduce((sum, game) => sum + parseTimeToSeconds(game.time), 0);
     timeEl.innerText = formatDurationLabel(totalSeconds);
 }
 
@@ -186,6 +326,11 @@ function setViewMode(mode) {
     viewMode = mode === "list" ? "list" : "panel";
     document.getElementById("view-panel").classList.toggle("active", viewMode === "panel");
     document.getElementById("view-list").classList.toggle("active", viewMode === "list");
+    refreshLibrary();
+}
+
+function setSortMode(mode) {
+    sortMode = mode || "name_asc";
     refreshLibrary();
 }
 
@@ -288,7 +433,7 @@ async function runScan() {
         frameIndex = (frameIndex + 1) % frames.length;
     }, 90);
 
-    const res = await window.api.runCampfire(['scan'], 'n\n');
+    const res = await window.api.runCampfire(['scan'], 'y\n');
     clearInterval(ticker);
 
     if (res.code !== 0) {
@@ -310,6 +455,21 @@ async function runScan() {
     for (const entry of entries) {
         appendActivity(`${entry.name.padEnd(nameWidth)} | ${entry.path}`);
         await sleep(28);
+    }
+
+    const addedMatch = (res.stdout || "").match(/added:\s*(\d+)/i);
+    const skippedMatch = (res.stdout || "").match(/skipped.*:\s*(\d+)/i);
+    const addedCount = addedMatch ? Number(addedMatch[1]) : 0;
+    const skippedCount = skippedMatch ? Number(skippedMatch[1]) : 0;
+    appendActivity("");
+    appendActivity(`Added: ${addedCount}`);
+    appendActivity(`Skipped: ${skippedCount}`);
+
+    if (addedCount > 0) {
+        await refreshLibrary();
+        appendActivity("Library refreshed.");
+    } else {
+        appendActivity("No library changes found. Refresh skipped.");
     }
     scanInProgress = false;
 }
@@ -349,6 +509,21 @@ async function runDoctor() {
     }
 }
 
+async function runDebugReport() {
+    const outputEl = getActivityEl();
+    outputEl.textContent = "Running...";
+    const frames = ['.', '..', '...', '..'];
+    let frameIndex = 0;
+    const ticker = setInterval(() => {
+        outputEl.textContent = `Running${frames[frameIndex]}`;
+        frameIndex = (frameIndex + 1) % frames.length;
+    }, 90);
+
+    const res = await window.api.runCampfire(["debug"]);
+    clearInterval(ticker);
+    setActivity((res.stdout || res.stderr || "Debug command finished.").trim());
+}
+
 function setPageHeader(pageId) {
     const title = document.getElementById('page-title');
     const subtitle = document.getElementById('page-subtitle');
@@ -384,13 +559,20 @@ function openDoctorFromMenu() {
     runDoctor();
 }
 
+function openDebugFromMenu() {
+    showPage('library');
+    runDebugReport();
+}
+
 function openHelpFromMenu() {
     const helpText = [
         "Campfire",
         "",
         "Tools > Scan Library: scans common game directories",
         "Tools > Run Doctor: checks library/runtime health",
+        "Tools > Generate Debug Report: writes a debug file with doctor, scan, and launch logs",
         "+ > Add Game: manually add a game entry",
+        "Edit a game to remove it from your library",
         "",
         "Launch tip: open a game's Edit panel and enable force fallback for wrapper-heavy installs"
     ].join("\n");
@@ -416,6 +598,7 @@ async function openEditModal(id) {
     document.getElementById('add-args').value = '';
     document.getElementById('edit-force-wrap').style.display = 'flex';
     document.getElementById('edit-force-fallback').checked = Boolean(forceFallbackById[id]);
+    document.getElementById('modal-delete').style.display = 'inline-flex';
     document.getElementById('modal').style.display = 'flex';
 }
 
@@ -429,7 +612,30 @@ function openModal() {
     document.getElementById('add-args').value = '';
     document.getElementById('edit-force-wrap').style.display = 'none';
     document.getElementById('edit-force-fallback').checked = false;
+    document.getElementById('modal-delete').style.display = 'none';
     document.getElementById('modal').style.display = 'flex';
+}
+
+async function deleteGame() {
+    const id = document.getElementById("edit-id").value;
+    if (!id) {
+        return;
+    }
+    if (!window.confirm("Delete this game from your library?")) {
+        return;
+    }
+
+    const res = await window.api.runCampfire(["remove", "--id", id]);
+    if (res.code === 0) {
+        delete forceFallbackById[id];
+        persistForceFallbackMap();
+        closeModal();
+        setActivity((res.stdout || "Game removed.").trim());
+        await refreshLibrary();
+        return;
+    }
+
+    setActivity((res.stderr || res.stdout || "Failed to remove game").trim());
 }
 
 function closeModal() { document.getElementById('modal').style.display = 'none'; }
@@ -485,8 +691,11 @@ window.refreshLibrary = refreshLibrary;
 window.openScanFromMenu = openScanFromMenu;
 window.openDoctorFromMenu = openDoctorFromMenu;
 window.openHelpFromMenu = openHelpFromMenu;
+window.openDebugFromMenu = openDebugFromMenu;
 window.setViewMode = setViewMode;
+window.setSortMode = setSortMode;
 window.clearActivity = clearActivity;
+window.deleteGame = deleteGame;
 
 window.addEventListener('DOMContentLoaded', () => {
     setupActivityResizeHandle();

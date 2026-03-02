@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Menu, ipcMain } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
+const fs = require("fs");
 
 function resolveCampfireBinary() {
   if (app.isPackaged) {
@@ -64,6 +65,38 @@ ipcMain.handle('run-campfire', async (event, args, stdinText = "") => {
     }
     child.stdin.end();
   });
+});
+
+ipcMain.handle("find-artwork", async (event, exePath) => {
+  try {
+    if (!exePath) {
+      return "";
+    }
+
+    const dir = path.dirname(exePath);
+    const base = path.parse(exePath).name;
+    const candidates = [
+      "cover.jpg",
+      "cover.png",
+      "poster.jpg",
+      "poster.png",
+      "banner.jpg",
+      "banner.png",
+      `${base}.jpg`,
+      `${base}.png`,
+    ];
+
+    for (const file of candidates) {
+      const full = path.join(dir, file);
+      if (fs.existsSync(full)) {
+        return full;
+      }
+    }
+
+    return "";
+  } catch (_) {
+    return "";
+  }
 });
 
 app.whenReady().then(() => {
