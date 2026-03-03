@@ -20,13 +20,169 @@ static fs::path data_file_path() {
   return fs::current_path() / "data" / "games.tsv";
 }
 
+static bool is_all_digits(const std::string& value) {
+  if (value.empty()) {
+    return false;
+  }
+  for (char ch : value) {
+    if (ch < '0' || ch > '9') {
+      return false;
+    }
+  }
+  return true;
+}
+
+static std::vector<std::string> extract_quoted_tokens(const std::string& line) {
+  std::vector<std::string> tokens;
+  size_t pos = 0;
+  while (pos < line.size()) {
+    const size_t start = line.find('"', pos);
+    if (start == std::string::npos) {
+      break;
+    }
+    const size_t end = line.find('"', start + 1);
+    if (end == std::string::npos) {
+      break;
+    }
+    tokens.push_back(line.substr(start + 1, end - start - 1));
+    pos = end + 1;
+  }
+  return tokens;
+}
+
+static void add_unique_path(std::vector<fs::path>& roots, std::unordered_set<std::string>& seen, const fs::path& path) {
+  std::string key = path.lexically_normal().string();
+  std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  if (seen.find(key) != seen.end()) {
+    return;
+  }
+  seen.insert(key);
+  roots.push_back(path);
+}
+
+static std::vector<fs::path> discover_steam_common_roots() {
+  std::vector<fs::path> roots;
+  std::unordered_set<std::string> seen;
+  std::vector<fs::path> steam_roots;
+
+  if (const char* pf86 = std::getenv("ProgramFiles(x86)")) {
+    steam_roots.push_back(fs::path(pf86) / "Steam");
+  }
+  if (const char* pf = std::getenv("ProgramFiles")) {
+    steam_roots.push_back(fs::path(pf) / "Steam");
+  }
+  steam_roots.push_back(R"(C:\Steam)");
+  steam_roots.push_back(R"(D:\Steam)");
+  steam_roots.push_back(R"(E:\Steam)");
+
+  for (const fs::path& steam_root : steam_roots) {
+    add_unique_path(roots, seen, steam_root / "steamapps" / "common");
+
+    const fs::path libraryfolders = steam_root / "steamapps" / "libraryfolders.vdf";
+    std::ifstream in(libraryfolders);
+    if (!in) {
+      continue;
+    }
+
+    std::string line;
+    while (std::getline(in, line)) {
+      const std::vector<std::string> tokens = extract_quoted_tokens(line);
+      if (tokens.size() < 2) {
+        continue;
+      }
+
+      // Newer format: "path" "<library_path>"
+      if (tokens[0] == "path") {
+        std::string value = tokens[1];
+        size_t pos = 0;
+        while ((pos = value.find("\\\\", pos)) != std::string::npos) {
+          value.replace(pos, 2, "\\");
+          pos += 1;
+        }
+        add_unique_path(roots, seen, fs::path(value) / "steamapps" / "common");
+        continue;
+      }
+
+      // Older format: "<index>" "<library_path>"
+      if (is_all_digits(tokens[0])) {
+        std::string value = tokens[1];
+        size_t pos = 0;
+        while ((pos = value.find("\\\\", pos)) != std::string::npos) {
+          value.replace(pos, 2, "\\");
+          pos += 1;
+        }
+        add_unique_path(roots, seen, fs::path(value) / "steamapps" / "common");
+      }
+    }
+  }
+
+  return roots;
+}
+
 // Root directories that `scan` inspects for installed games.
 static const std::vector<fs::path>& scan_roots() {
-  static const std::vector<fs::path> roots = {
-      R"(C:\games)",
-      R"(D:\games)",
-      R"(C:\Program Files (x86)\Steam\steamapps\common)",
-  };
+  static const std::vector<fs::path> roots = []() {
+    std::vector<fs::path> out = {
+        R"(C:\games)",
+        R"(D:\games)",
+        R"(E:\games)",
+        R"(C:\XboxGames)",
+        R"(D:\XboxGames)",
+        R"(E:\XboxGames)",
+        R"(C:\Riot Games)",
+        R"(D:\Riot Games)",
+        R"(E:\Riot Games)",
+        R"(D:\Epic Games)",
+        R"(E:\Epic Games)",
+        R"(D:\EA Games)",
+        R"(E:\EA Games)",
+        R"(D:\Electronic Arts)",
+        R"(E:\Electronic Arts)",
+        R"(D:\Battle.net)",
+        R"(E:\Battle.net)",
+        R"(D:\Blizzard)",
+        R"(E:\Blizzard)",
+    };
+
+    if (const char* pf86 = std::getenv("ProgramFiles(x86)")) {
+      const fs::path base(pf86);
+      out.push_back(base / "Battle.net");
+      out.push_back(base / "Blizzard");
+      out.push_back(base / "Epic Games");
+      out.push_back(base / "EA Games");
+      out.push_back(base / "Electronic Arts");
+    }
+
+    if (const char* pf = std::getenv("ProgramFiles")) {
+      const fs::path base(pf);
+      out.push_back(base / "Battle.net");
+      out.push_back(base / "Blizzard");
+      out.push_back(base / "Epic Games");
+      out.push_back(base / "EA Games");
+      out.push_back(base / "Electronic Arts");
+    }
+
+    const std::vector<fs::path> steam_roots = discover_steam_common_roots();
+    out.insert(out.end(), steam_roots.begin(), steam_roots.end());
+
+    std::vector<fs::path> deduped;
+    std::unordered_set<std::string> seen;
+    deduped.reserve(out.size());
+    for (const fs::path& root : out) {
+      std::string key = root.lexically_normal().string();
+      std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+      });
+      if (seen.find(key) != seen.end()) {
+        continue;
+      }
+      seen.insert(key);
+      deduped.push_back(root);
+    }
+    return deduped;
+  }();
   return roots;
 }
 
@@ -341,6 +497,16 @@ std::vector<ScannedGame> scan_common_game_dirs() {
     std::error_code ec;
     if (!fs::exists(root, ec) || !fs::is_directory(root, ec)) {
       continue;
+    }
+
+    // Support roots that directly point at one game install folder.
+    const fs::path root_exe_path = pick_game_executable(root);
+    if (!root_exe_path.empty()) {
+      const std::string key = to_lower(root_exe_path.string());
+      if (seen_exe_paths.find(key) == seen_exe_paths.end()) {
+        found.push_back(ScannedGame{root.filename().string(), root_exe_path.string()});
+        seen_exe_paths.insert(key);
+      }
     }
 
     fs::directory_iterator dir_it(root, fs::directory_options::skip_permission_denied, ec);

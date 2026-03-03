@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <ctime>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -23,6 +24,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <tlhelp32.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -111,6 +113,68 @@ std::vector<std::string> extract_quoted_tokens(const std::string& line) {
 }
 
 std::string detect_steam_app_id(const std::string& exe_path_text);
+
+std::string now_iso_local() {
+  const std::time_t now = std::time(nullptr);
+  std::tm local_tm{};
+#ifdef _WIN32
+  localtime_s(&local_tm, &now);
+#else
+  localtime_r(&now, &local_tm);
+#endif
+  char buffer[32]{};
+  std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &local_tm);
+  return buffer;
+}
+
+fs::path campfire_data_dir() {
+  if (const char* local_app_data = std::getenv("LOCALAPPDATA")) {
+    return fs::path(local_app_data) / "Campfire";
+  }
+  return fs::current_path() / "data";
+}
+
+fs::path launch_log_path() {
+  return campfire_data_dir() / "logs" / "launch.log";
+}
+
+void append_launch_log(const std::string& message) {
+  std::error_code ec;
+  const fs::path path = launch_log_path();
+  fs::create_directories(path.parent_path(), ec);
+  std::ofstream out(path, std::ios::app);
+  if (!out) {
+    return;
+  }
+  out << "[" << now_iso_local() << "] " << message << '\n';
+}
+
+std::string detect_launcher_from_path(const std::string& exe_path_text) {
+  std::string lower = ui::to_lower(exe_path_text);
+  std::replace(lower.begin(), lower.end(), '/', '\\');
+
+  if (!detect_steam_app_id(exe_path_text).empty() || lower.find("\\steamapps\\common\\") != std::string::npos) {
+    return "Steam";
+  }
+  if (lower.find("\\riot games\\") != std::string::npos || lower.find("\\riot client\\") != std::string::npos) {
+    return "Riot";
+  }
+  if (lower.find("\\xboxgames\\") != std::string::npos || lower.find("\\windowsapps\\") != std::string::npos) {
+    return "Xbox";
+  }
+  if (lower.find("battle.net") != std::string::npos || lower.find("\\blizzard\\") != std::string::npos ||
+      lower.find("\\blizzard app\\") != std::string::npos) {
+    return "Battle.net";
+  }
+  if (lower.find("\\epic games\\") != std::string::npos || lower.find("\\epicgames\\") != std::string::npos) {
+    return "Epic";
+  }
+  if (lower.find("\\ea games\\") != std::string::npos || lower.find("\\electronic arts\\") != std::string::npos ||
+      lower.find("\\ea app\\") != std::string::npos) {
+    return "EA";
+  }
+  return "Local";
+}
 
 std::string trim_copy(const std::string& value) {
   size_t start = 0;
@@ -317,8 +381,15 @@ std::string read_steam_appid_txt(const fs::path& dir) {
   return is_all_digits(line) ? line : "";
 }
 
+bool is_path_in_steam_common(const fs::path& path) {
+  std::string lower_path = ui::to_lower(path.string());
+  std::replace(lower_path.begin(), lower_path.end(), '/', '\\');
+  return lower_path.find("\\steamapps\\common\\") != std::string::npos;
+}
+
 std::string detect_steam_app_id_from_manifest(const fs::path& exe_path) {
-  const std::string lower_path = ui::to_lower(exe_path.string());
+  std::string lower_path = ui::to_lower(exe_path.string());
+  std::replace(lower_path.begin(), lower_path.end(), '/', '\\');
   const std::string token = "\\steamapps\\common\\";
   const size_t token_pos = lower_path.find(token);
   if (token_pos == std::string::npos) {
@@ -385,6 +456,11 @@ std::string detect_steam_app_id(const std::string& exe_path_text) {
   fs::path exe_path = fs::weakly_canonical(fs::path(exe_path_text), ec);
   if (ec) {
     exe_path = fs::path(exe_path_text);
+  }
+
+  // Treat games as Steam only when their executable actually resides in a Steam library.
+  if (!is_path_in_steam_common(exe_path)) {
+    return "";
   }
 
   fs::path dir = exe_path.parent_path();
@@ -605,9 +681,37 @@ const Game* find_game_by_id_or_name(
 }
 
 #ifdef _WIN32
-LaunchResult start_steam_process(const std::string& app_id) {
+std::vector<DWORD> list_process_ids_by_exe_name(const std::string& exe_name_lower) {
+  std::vector<DWORD> pids;
+  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snapshot == INVALID_HANDLE_VALUE) {
+    return pids;
+  }
+
+  PROCESSENTRY32 entry{};
+  entry.dwSize = sizeof(entry);
+  if (Process32First(snapshot, &entry)) {
+    do {
+      const std::string process_name = ui::to_lower(entry.szExeFile);
+      if (process_name == exe_name_lower) {
+        pids.push_back(entry.th32ProcessID);
+      }
+    } while (Process32Next(snapshot, &entry));
+  }
+
+  CloseHandle(snapshot);
+  return pids;
+}
+
+bool contains_pid(const std::vector<DWORD>& pids, DWORD pid) {
+  return std::find(pids.begin(), pids.end(), pid) != pids.end();
+}
+
+LaunchResult start_steam_process(const std::string& app_id, const std::string& expected_exe_path) {
   std::string steam_exe = "steam.exe";
   std::string steam_workdir;
+  const std::string expected_exe_name = ui::to_lower(fs::path(expected_exe_path).filename().string());
+  const std::vector<DWORD> existing_pids = list_process_ids_by_exe_name(expected_exe_name);
 
   if (const char* pf86 = std::getenv("ProgramFiles(x86)")) {
     const fs::path candidate = fs::path(pf86) / "Steam" / "steam.exe";
@@ -645,7 +749,42 @@ LaunchResult start_steam_process(const std::string& app_id) {
 
   CloseHandle(process_info.hThread);
   CloseHandle(process_info.hProcess);
-  return LaunchResult{0, 0};
+
+  const auto wait_start = std::chrono::steady_clock::now();
+  HANDLE game_process = nullptr;
+  for (int i = 0; i < 240; ++i) {
+    const std::vector<DWORD> current_pids = list_process_ids_by_exe_name(expected_exe_name);
+    for (DWORD pid : current_pids) {
+      if (contains_pid(existing_pids, pid)) {
+        continue;
+      }
+      game_process = OpenProcess(SYNCHRONIZE, FALSE, pid);
+      if (game_process != nullptr) {
+        break;
+      }
+    }
+    if (game_process != nullptr) {
+      break;
+    }
+    Sleep(500);
+  }
+
+  if (game_process == nullptr) {
+    ui::print_info("Steam launch started, but game process tracking was unavailable.");
+    return LaunchResult{0, 0};
+  }
+
+  const DWORD wait_result = WaitForSingleObject(game_process, INFINITE);
+  CloseHandle(game_process);
+  if (wait_result != WAIT_OBJECT_0) {
+    ui::print_info("Steam launch started, but session timing could not be completed.");
+    return LaunchResult{0, 0};
+  }
+
+  const auto wait_end = std::chrono::steady_clock::now();
+  const auto elapsed_seconds =
+      std::chrono::duration_cast<std::chrono::seconds>(wait_end - wait_start).count();
+  return LaunchResult{0, elapsed_seconds};
 }
 
 LaunchResult start_process(const std::string& exe_path, const std::string& launch_args) {
@@ -700,9 +839,15 @@ LaunchResult start_process(const std::string& exe_path, const std::string& launc
   CloseHandle(process_info.hProcess);
   return LaunchResult{0, elapsed_seconds};
 }
+
+bool is_process_running_for_path(const std::string& exe_path) {
+  const std::string exe_name = ui::to_lower(fs::path(exe_path).filename().string());
+  return !list_process_ids_by_exe_name(exe_name).empty();
+}
 #else
-LaunchResult start_steam_process(const std::string& app_id) {
+LaunchResult start_steam_process(const std::string& app_id, const std::string& expected_exe_path) {
   (void)app_id;
+  (void)expected_exe_path;
   ui::print_error("Steam launch mode is not supported on this platform yet.");
   return {};
 }
@@ -722,7 +867,84 @@ LaunchResult start_process(const std::string& exe_path, const std::string& launc
       std::chrono::duration_cast<std::chrono::seconds>(session_end - session_start).count();
   return LaunchResult{0, elapsed_seconds};
 }
+
+bool is_process_running_for_path(const std::string& exe_path) {
+  (void)exe_path;
+  return false;
+}
 #endif
+
+bool write_doctor_report(std::ostream& out) {
+  bool healthy = true;
+  out << "[info] Running Campfire diagnostics...\n";
+
+  const char* local_app_data = std::getenv("LOCALAPPDATA");
+  if (local_app_data != nullptr && local_app_data[0] != '\0') {
+    out << "[ok] LOCALAPPDATA: " << local_app_data << '\n';
+  } else {
+    out << "[info] LOCALAPPDATA is not set. Campfire will use a local ./data fallback.\n";
+  }
+
+  const std::string library_path = game_library_file_path();
+  out << "[info] Library file: " << library_path << '\n';
+
+  std::vector<Game> games;
+  try {
+    games = load_games();
+    out << "[ok] Library is readable. Entries: " << games.size() << '\n';
+  } catch (const std::exception& ex) {
+    out << "[error] Library read failed: " << ex.what() << '\n';
+    return false;
+  }
+
+  std::unordered_set<std::string> seen_exes;
+  int duplicate_exe_count = 0;
+  int missing_exe_count = 0;
+  for (const Game& game : games) {
+    const std::string exe_key = normalize_path_for_compare(game.exe_path);
+    if (seen_exes.find(exe_key) != seen_exes.end()) {
+      ++duplicate_exe_count;
+    } else {
+      seen_exes.insert(exe_key);
+    }
+
+    std::error_code ec;
+    if (!fs::exists(game.exe_path, ec) || ec || !fs::is_regular_file(game.exe_path, ec)) {
+      ++missing_exe_count;
+    }
+  }
+
+  if (duplicate_exe_count == 0) {
+    out << "[ok] No duplicate executable paths in library.\n";
+  } else {
+    out << "[error] Duplicate executable entries detected: " << duplicate_exe_count << '\n';
+    healthy = false;
+  }
+
+  if (missing_exe_count == 0) {
+    out << "[ok] All library executables exist on disk.\n";
+  } else {
+    out << "[error] Missing executable files: " << missing_exe_count << '\n';
+    healthy = false;
+  }
+
+  const std::vector<std::string> roots = common_scan_roots();
+  int present_root_count = 0;
+  for (const std::string& root : roots) {
+    std::error_code ec;
+    if (fs::exists(root, ec) && fs::is_directory(root, ec)) {
+      ++present_root_count;
+    }
+  }
+  out << "[info] Scan roots present: " << present_root_count << "/" << roots.size() << '\n';
+
+  if (healthy) {
+    out << "[ok] Doctor checks passed.\n";
+  } else {
+    out << "[error] Doctor found issues.\n";
+  }
+  return healthy;
+}
 }  // namespace
 
 namespace commands {
@@ -831,6 +1053,12 @@ int handle_info(const std::vector<std::string>& args) {
   std::cout << "id: " << game->id << '\n';
   std::cout << "name: " << game->name << '\n';
   std::cout << "path: " << game->exe_path << '\n';
+  const std::string launcher = detect_launcher_from_path(game->exe_path);
+  std::cout << "launcher: " << launcher << '\n';
+  const std::string steam_app_id = detect_steam_app_id(game->exe_path);
+  if (!steam_app_id.empty()) {
+    std::cout << "steam app id: " << steam_app_id << '\n';
+  }
   if (!game->exe_candidates.empty()) {
     std::cout << "launch candidates: ";
     for (size_t i = 0; i < game->exe_candidates.size(); ++i) {
@@ -1035,77 +1263,72 @@ int handle_remove(const std::vector<std::string>& args) {
 
 // Runs non-destructive diagnostics for the local Campfire runtime.
 int handle_doctor() {
-  bool healthy = true;
-  ui::print_info("Running Campfire diagnostics...");
+  std::ostringstream report;
+  const bool healthy = write_doctor_report(report);
+  std::cout << report.str();
+  return healthy ? 0 : 1;
+}
 
-  const char* local_app_data = std::getenv("LOCALAPPDATA");
-  if (local_app_data != nullptr && local_app_data[0] != '\0') {
-    ui::print_ok(std::string("LOCALAPPDATA: ") + local_app_data);
-  } else {
-    ui::print_info("LOCALAPPDATA is not set. Campfire will use a local ./data fallback.");
-  }
-
-  const std::string library_path = game_library_file_path();
-  ui::print_info("Library file: " + library_path);
-
-  std::vector<Game> games;
-  try {
-    games = load_games();
-    ui::print_ok("Library is readable. Entries: " + std::to_string(games.size()));
-  } catch (const std::exception& ex) {
-    ui::print_error(std::string("Library read failed: ") + ex.what());
+int handle_debug() {
+  std::error_code ec;
+  const fs::path debug_dir = campfire_data_dir() / "debug";
+  fs::create_directories(debug_dir, ec);
+  if (ec) {
+    ui::print_error("Failed to create debug directory: " + debug_dir.string());
     return 1;
   }
 
-  std::unordered_set<std::string> seen_exes;
-  int duplicate_exe_count = 0;
-  int missing_exe_count = 0;
-  for (const Game& game : games) {
-    const std::string exe_key = normalize_path_for_compare(game.exe_path);
-    if (seen_exes.find(exe_key) != seen_exes.end()) {
-      ++duplicate_exe_count;
-    } else {
-      seen_exes.insert(exe_key);
-    }
+  std::string stamp = now_iso_local();
+  std::replace(stamp.begin(), stamp.end(), ' ', '_');
+  std::replace(stamp.begin(), stamp.end(), ':', '-');
+  const fs::path report_path = debug_dir / ("campfire-debug-" + stamp + ".txt");
 
-    std::error_code ec;
-    if (!fs::exists(game.exe_path, ec) || ec || !fs::is_regular_file(game.exe_path, ec)) {
-      ++missing_exe_count;
-    }
+  std::ofstream out(report_path, std::ios::trunc);
+  if (!out) {
+    ui::print_error("Failed to write debug report: " + report_path.string());
+    return 1;
   }
 
-  if (duplicate_exe_count == 0) {
-    ui::print_ok("No duplicate executable paths in library.");
+  out << "Campfire Debug Report\n";
+  out << "Generated: " << now_iso_local() << "\n\n";
+
+  out << "=== Doctor ===\n";
+  std::ostringstream doctor_text;
+  const bool doctor_ok = write_doctor_report(doctor_text);
+  out << doctor_text.str() << '\n';
+
+  out << "=== Scan (detected) ===\n";
+  const std::vector<ScannedGame> found = scan_common_game_dirs();
+  if (found.empty()) {
+    out << "(none)\n\n";
   } else {
-    ui::print_error("Duplicate executable entries detected: " + std::to_string(duplicate_exe_count));
-    healthy = false;
-  }
-
-  if (missing_exe_count == 0) {
-    ui::print_ok("All library executables exist on disk.");
-  } else {
-    ui::print_error("Missing executable files: " + std::to_string(missing_exe_count));
-    healthy = false;
-  }
-
-  const std::vector<std::string> roots = common_scan_roots();
-  int present_root_count = 0;
-  for (const std::string& root : roots) {
-    std::error_code ec;
-    if (fs::exists(root, ec) && fs::is_directory(root, ec)) {
-      ++present_root_count;
+    size_t width = 0;
+    for (const ScannedGame& item : found) {
+      width = std::max(width, item.name.size());
     }
-  }
-  ui::print_info(
-      "Scan roots present: " + std::to_string(present_root_count) + "/" + std::to_string(roots.size()));
-
-  if (healthy) {
-    ui::print_ok("Doctor checks passed.");
-    return 0;
+    for (const ScannedGame& item : found) {
+      out << std::left << std::setw(static_cast<int>(width)) << item.name
+          << " | " << item.exe_path << '\n';
+    }
+    out << '\n';
   }
 
-  ui::print_error("Doctor found issues.");
-  return 1;
+  out << "=== Launch Log ===\n";
+  const fs::path log_path = launch_log_path();
+  std::ifstream log_in(log_path);
+  if (!log_in) {
+    out << "(no launch log found at " << log_path.string() << ")\n";
+  } else {
+    out << log_in.rdbuf();
+    out << '\n';
+  }
+
+  out.close();
+  ui::print_ok("Debug report written: " + report_path.string());
+  if (!doctor_ok) {
+    ui::print_info("Doctor section found issues. See report for details.");
+  }
+  return 0;
 }
 
 // Launches one game by ID or exact name match.
@@ -1121,11 +1344,17 @@ int handle_launch(const std::vector<std::string>& args) {
   const std::vector<Game> games = load_games();
   const Game* game = find_game_by_id_or_name(games, id, name);
   if (!game) {
+    append_launch_log("launch failed: game not found for id/name target");
     ui::print_error("No game found for launch target.");
     return 1;
   }
 
   Game selected = *game;
+  if (is_process_running_for_path(selected.exe_path)) {
+    append_launch_log("launch skipped: already running | id=" + selected.id + " name=" + selected.name);
+    ui::print_info("Game is already running: " + selected.name);
+    return 0;
+  }
   const std::unordered_map<std::string, long long> steam_play_seconds =
       load_local_steam_play_seconds(possible_steam_roots_from_game_path(selected.exe_path));
   if (sync_steam_playtime_from_local_cache(selected, steam_play_seconds)) {
@@ -1134,6 +1363,7 @@ int handle_launch(const std::vector<std::string>& args) {
 
   const std::vector<std::string> candidates = build_launch_candidates(selected);
   if (candidates.empty()) {
+    append_launch_log("launch failed: no candidates | id=" + selected.id + " name=" + selected.name);
     ui::print_error("No executable candidates are configured for this game.");
     return 1;
   }
@@ -1147,17 +1377,25 @@ int handle_launch(const std::vector<std::string>& args) {
     const std::string& candidate = candidates[i];
     std::error_code ec;
     if (!fs::exists(candidate, ec) || ec || !fs::is_regular_file(candidate, ec)) {
+      append_launch_log(
+          "candidate skipped missing [" + std::to_string(i + 1) + "] | id=" + selected.id + " exe=" + candidate);
       ui::print_info("Skipping missing candidate [" + std::to_string(i + 1) + "]: " + candidate);
       continue;
     }
 
     const std::string steam_app_id = detect_steam_app_id(candidate);
     if (!steam_app_id.empty()) {
+      append_launch_log(
+          "candidate attempt steam [" + std::to_string(i + 1) + "/" + std::to_string(candidates.size()) +
+          "] | id=" + selected.id + " appid=" + steam_app_id + " exe=" + candidate);
       ui::print_info(
           "Trying candidate [" + std::to_string(i + 1) + "/" + std::to_string(candidates.size()) +
           "] via Steam app id: " + steam_app_id);
-      launch_result = start_steam_process(steam_app_id);
+      launch_result = start_steam_process(steam_app_id, candidate);
     } else {
+      append_launch_log(
+          "candidate attempt native [" + std::to_string(i + 1) + "/" + std::to_string(candidates.size()) +
+          "] | id=" + selected.id + " exe=" + candidate);
       ui::print_info(
           "Trying candidate [" + std::to_string(i + 1) + "/" + std::to_string(candidates.size()) +
           "]: " + candidate);
@@ -1168,6 +1406,9 @@ int handle_launch(const std::vector<std::string>& args) {
       if (force_fallback && steam_app_id.empty() &&
           launch_result.session_seconds < kForceFallbackMinSessionSeconds &&
           i + 1 < candidates.size()) {
+        append_launch_log(
+            "candidate suspicious short session " + std::to_string(launch_result.session_seconds) +
+            "s | id=" + selected.id + " exe=" + candidate + " | trying fallback");
         ui::print_info(
             "Candidate exited after " + std::to_string(launch_result.session_seconds) +
             "s. Force fallback is enabled; trying next candidate.");
@@ -1181,11 +1422,15 @@ int handle_launch(const std::vector<std::string>& args) {
     }
 
     if (i + 1 < candidates.size()) {
+      append_launch_log(
+          "candidate failed [" + std::to_string(i + 1) + "/" + std::to_string(candidates.size()) +
+          "] | id=" + selected.id + " exe=" + candidate);
       ui::print_info("Candidate failed. Trying next fallback...");
     }
   }
 
   if (launch_result.code != 0) {
+    append_launch_log("launch failed all candidates | id=" + selected.id + " name=" + selected.name);
     ui::print_error("All launch candidates failed.");
     return launch_result.code;
   }
@@ -1200,12 +1445,18 @@ int handle_launch(const std::vector<std::string>& args) {
     updated.play_count += 1;
     updated.total_play_seconds += launch_result.session_seconds;
     if (!update_game(updated)) {
+      append_launch_log("launch succeeded but persist failed | id=" + selected.id + " exe=" + launched_exe);
       ui::print_error("Game launched, but failed to persist play stats.");
       return 1;
     }
 
+    append_launch_log(
+        "launch success | id=" + selected.id + " name=" + selected.name + " launcher=" +
+        detect_launcher_from_path(launched_exe) + " session=" + std::to_string(launch_result.session_seconds) +
+        "s total=" + std::to_string(updated.total_play_seconds) + "s exe=" + launched_exe);
+
     ui::print_ok("Launched: " + selected.name);
-    if (!launched_steam_app_id.empty()) {
+    if (!launched_steam_app_id.empty() && launch_result.session_seconds == 0) {
       std::cout << "session time: tracking unavailable for Steam launches\n";
     } else {
       std::cout << "session time: " << launch_result.session_seconds << "s\n";

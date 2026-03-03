@@ -113,6 +113,7 @@ void print_help() {
       << "  remove --id <id>\n"
       << "  launch (--id <id> | --name \"<name>\") [--force-fallback]\n"
       << "  doctor\n"
+      << "  debug\n"
       << "  scan\n"
       << "  list\n" 
       << "  --help\n";

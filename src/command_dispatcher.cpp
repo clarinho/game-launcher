@@ -40,6 +40,9 @@ int dispatch_command(const std::vector<std::string>& args) {
   if (command == "doctor") {
     return handle_doctor();
   }
+  if (command == "debug") {
+    return handle_debug();
+  }
 
   ui::print_error("Unknown command: " + command);
   ui::print_help();

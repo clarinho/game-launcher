@@ -28,6 +28,9 @@ int handle_launch(const std::vector<std::string>& args);
 
 // Handles `campfire doctor` runtime diagnostics.
 int handle_doctor();
+
+// Handles `campfire debug` report generation.
+int handle_debug();
 }  // namespace commands
 
 #endif
